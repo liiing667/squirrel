@@ -10,7 +10,12 @@ import (
 //
 // Stmts are cached based on the string value of their queries.
 func NewStmtCache(prep Preparer) *StmtCache {
-	return &StmtCacher{prep: prep, cache: make(map[string]*sql.Stmt)}
+	return &StmtCache{
+		prep:     prep,
+		cache:    make(map[string]*sql.Stmt),
+		entries:  make(map[string]CacheEntry),
+		inflight: make(map[string]*inflight),
+	}
 }
 
 // NewStmtCacher is deprecated

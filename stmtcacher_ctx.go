@@ -28,7 +28,12 @@ type DBProxyContext interface {
 //
 // Stmts are cached based on the string value of their queries.
 func NewStmtCache(prep PreparerContext) *StmtCache {
-	return &StmtCache{prep: prep, cache: make(map[string]*sql.Stmt)}
+	return &StmtCache{
+		prep:     prep,
+		cache:    make(map[string]*sql.Stmt),
+		entries:  make(map[string]CacheEntry),
+		inflight: make(map[string]*inflight),
+	}
 }
 
 // NewStmtCacher is deprecated
@@ -45,17 +50,44 @@ func (sc *StmtCache) PrepareContext(ctx context.Context, query string) (*sql.Stm
 	if !ok {
 		return nil, NoContextSupport
 	}
+
+	// A live cached statement stays valid regardless of the caller's context;
+	// cancellation only prevents starting a new prepare.
 	sc.mu.Lock()
-	defer sc.mu.Unlock()
-	stmt, ok := sc.cache[query]
-	if ok {
+	if stmt, cached := sc.cache[query]; cached {
+		sc.mu.Unlock()
 		return stmt, nil
 	}
-	stmt, err := ctxPrep.PrepareContext(ctx, query)
-	if err == nil {
-		sc.cache[query] = stmt
+	sc.mu.Unlock()
+
+	if err := ctx.Err(); err != nil {
+		sc.recordOutcome(query, stateForErr(err), err)
+		return nil, err
 	}
-	return stmt, err
+
+	wait, run := sc.beginPrepare(query, func() (*sql.Stmt, error) {
+		return ctxPrep.PrepareContext(ctx, query)
+	})
+	if run != nil {
+		return run()
+	}
+	return sc.awaitOutcome(query, wait)
+}
+
+// recordOutcome stores a non-cached prepare outcome (e.g. an already-canceled
+// context) so callers can observe it without inserting a statement.
+func (sc *StmtCache) recordOutcome(query string, state CacheState, err error) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	if _, cached := sc.cache[query]; cached {
+		return
+	}
+	sc.entries[query] = CacheEntry{
+		Query:      query,
+		State:      state,
+		Generation: sc.generation,
+		Err:        err,
+	}
 }
 
 // ExecContext delegates down to the underlying PreparerContext using a prepared statement

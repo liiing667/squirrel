@@ -71,6 +71,38 @@ mydb := sq.StatementBuilder.RunWith(dbCache)
 select_users := mydb.Select("*").From("users")
 ```
 
+The cache is safe for concurrent use and makes its lifecycle observable:
+
+- Concurrent calls for the same SQL share a single prepare; they never race
+  to insert different prepared statements.
+- `Clear()` closes every cached statement and bumps a **generation**. A
+  statement prepared before the clear is never returned afterwards, and a
+  prepare that finishes after a `Clear()` has its statement closed instead of
+  being cached.
+- A canceled context or a failed prepare is recorded
+  (`StateCanceled` / `StateFailed`) but never cached, so a later call retries
+  the prepare. A valid cached statement is still returned even if the caller's
+  context is already canceled.
+- Inspect the cache with `Generation()`, `State(sql)`, `Entry(sql)` and
+  `Snapshot()` to see which generation a statement belongs to and whether it is
+  preparing, prepared, canceled, or failed.
+
+```go
+cache := sq.NewStmtCache(db)
+
+if entry, ok := cache.Entry(query); ok {
+    // entry.State is one of StatePreparing, StatePrepared,
+    // StateCanceled or StateFailed; entry.Generation is the cache generation.
+    _ = entry
+}
+
+// Snapshot returns a point-in-time view safe to read from any goroutine.
+snapshot := cache.Snapshot()
+fmt.Printf("generation=%d prepared=%d preparing=%d canceled=%d failed=%d\n",
+    snapshot.Generation, snapshot.Prepared, snapshot.Preparing,
+    snapshot.Canceled, snapshot.Failed)
+```
+
 Squirrel loves PostgreSQL:
 
 ```go
