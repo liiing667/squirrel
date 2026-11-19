@@ -295,6 +295,39 @@ func TestSelectJoinClausePlaceholderNumbering(t *testing.T) {
 	assert.Equal(t, []interface{}{2, 1}, args)
 }
 
+func TestSelectBuilderNestedPlaceholderFormatMatrix(t *testing.T) {
+	// The nested builder deliberately carries a different (Dollar) format:
+	// the outermost builder's PlaceholderFormat alone must determine the
+	// final placeholders, so nested formats never leak or drift.
+	nested := StatementBuilder.PlaceholderFormat(Dollar).
+		Select("y").From("bar").Where(Eq{"z": 2})
+
+	formats := []struct {
+		name        string
+		format      PlaceholderFormat
+		expectedSql string
+	}{
+		{"Question", Question, "SELECT * FROM foo WHERE x IN (SELECT y FROM bar WHERE z = ?) AND a = ?"},
+		{"Dollar", Dollar, "SELECT * FROM foo WHERE x IN (SELECT y FROM bar WHERE z = $1) AND a = $2"},
+		{"Colon", Colon, "SELECT * FROM foo WHERE x IN (SELECT y FROM bar WHERE z = :1) AND a = :2"},
+		{"AtP", AtP, "SELECT * FROM foo WHERE x IN (SELECT y FROM bar WHERE z = @p1) AND a = @p2"},
+	}
+
+	for _, f := range formats {
+		t.Run(f.name, func(t *testing.T) {
+			sql, args, err := Select("*").From("foo").
+				Where(Expr("x IN (?)", nested)).
+				Where(Eq{"a": 1}).
+				PlaceholderFormat(f.format).
+				ToSql()
+
+			assert.NoError(t, err)
+			assert.Equal(t, f.expectedSql, sql)
+			assert.Equal(t, []interface{}{2, 1}, args)
+		})
+	}
+}
+
 func ExampleSelect() {
 	Select("id", "created", "first_name").From("users") // ... continue building up your query
 

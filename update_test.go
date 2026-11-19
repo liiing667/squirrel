@@ -105,3 +105,35 @@ func TestUpdateBuilderFromSelect(t *testing.T) {
 			"WHERE employees.account_id = subquery.id"
 	assert.Equal(t, expectedSql, sql)
 }
+
+func TestUpdateBuilderSetSubqueryPlaceholderFormatMatrix(t *testing.T) {
+	// The nested select deliberately carries a different (Dollar) format:
+	// the update builder's PlaceholderFormat alone formats the statement.
+	sub := StatementBuilder.PlaceholderFormat(Dollar).
+		Select("cnt").From("counts").Where(Eq{"id": 9})
+
+	formats := []struct {
+		name        string
+		format      PlaceholderFormat
+		expectedSql string
+	}{
+		{"Question", Question, "UPDATE t SET x = (SELECT cnt FROM counts WHERE id = ?) WHERE y = ?"},
+		{"Dollar", Dollar, "UPDATE t SET x = (SELECT cnt FROM counts WHERE id = $1) WHERE y = $2"},
+		{"Colon", Colon, "UPDATE t SET x = (SELECT cnt FROM counts WHERE id = :1) WHERE y = :2"},
+		{"AtP", AtP, "UPDATE t SET x = (SELECT cnt FROM counts WHERE id = @p1) WHERE y = @p2"},
+	}
+
+	for _, f := range formats {
+		t.Run(f.name, func(t *testing.T) {
+			sql, args, err := Update("t").
+				Set("x", sub).
+				Where(Eq{"y": 2}).
+				PlaceholderFormat(f.format).
+				ToSql()
+
+			assert.NoError(t, err)
+			assert.Equal(t, f.expectedSql, sql)
+			assert.Equal(t, []interface{}{9, 2}, args)
+		})
+	}
+}

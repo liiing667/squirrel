@@ -100,6 +100,37 @@ func TestInsertBuilderSelect(t *testing.T) {
 	assert.Equal(t, expectedArgs, args)
 }
 
+func TestInsertBuilderSelectPlaceholderFormatMatrix(t *testing.T) {
+	// The nested select deliberately carries a different (Dollar) format:
+	// the insert builder's PlaceholderFormat alone formats the statement.
+	sel := StatementBuilder.PlaceholderFormat(Dollar).
+		Select("field1").From("table1").Where(Eq{"field1": 1})
+
+	formats := []struct {
+		name        string
+		format      PlaceholderFormat
+		expectedSql string
+	}{
+		{"Question", Question, "INSERT INTO table2 (field1) SELECT field1 FROM table1 WHERE field1 = ?"},
+		{"Dollar", Dollar, "INSERT INTO table2 (field1) SELECT field1 FROM table1 WHERE field1 = $1"},
+		{"Colon", Colon, "INSERT INTO table2 (field1) SELECT field1 FROM table1 WHERE field1 = :1"},
+		{"AtP", AtP, "INSERT INTO table2 (field1) SELECT field1 FROM table1 WHERE field1 = @p1"},
+	}
+
+	for _, f := range formats {
+		t.Run(f.name, func(t *testing.T) {
+			sql, args, err := Insert("table2").Columns("field1").
+				Select(sel).
+				PlaceholderFormat(f.format).
+				ToSql()
+
+			assert.NoError(t, err)
+			assert.Equal(t, f.expectedSql, sql)
+			assert.Equal(t, []interface{}{1}, args)
+		})
+	}
+}
+
 func TestInsertBuilderReplace(t *testing.T) {
 	b := Replace("table").Values(1)
 
