@@ -71,6 +71,22 @@ mydb := sq.StatementBuilder.RunWith(dbCache)
 select_users := mydb.Select("*").From("users")
 ```
 
+`StmtCache` exposes observable state so callers can reason about cache
+boundaries. Each `Clear` bumps a generation; canceled or failed prepares are
+recorded (via `StmtStatusCanceled` / `StmtStatusFailed`) without polluting the
+statement cache, and concurrent prepares of the same SQL are deduplicated.
+
+```go
+stmt, state, err := dbCache.PrepareContextState(ctx, query)
+fmt.Println(state.Generation, state.Status) // e.g. 0 prepared
+
+if observed, ok := dbCache.State(query); ok {
+    // observed.Generation / observed.Status / observed.Err
+}
+
+dbCache.Clear() // generation is now 1; in-flight prepares cannot repopulate stale statements
+```
+
 Squirrel loves PostgreSQL:
 
 ```go

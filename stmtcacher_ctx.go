@@ -28,7 +28,12 @@ type DBProxyContext interface {
 //
 // Stmts are cached based on the string value of their queries.
 func NewStmtCache(prep PreparerContext) *StmtCache {
-	return &StmtCache{prep: prep, cache: make(map[string]*sql.Stmt)}
+	return &StmtCache{
+		prep:     prep,
+		cache:    make(map[string]*sql.Stmt),
+		inflight: make(map[string]*inflightPrepare),
+		states:   make(map[string]StmtState),
+	}
 }
 
 // NewStmtCacher is deprecated
@@ -41,21 +46,34 @@ func NewStmtCacher(prep PreparerContext) DBProxyContext {
 // PrepareContext delegates down to the underlying PreparerContext and caches the result
 // using the provided query as a key
 func (sc *StmtCache) PrepareContext(ctx context.Context, query string) (*sql.Stmt, error) {
+	stmt, _, err := sc.PrepareContextState(ctx, query)
+	return stmt, err
+}
+
+// PrepareContextState delegates like PrepareContext but additionally returns
+// the observable StmtState describing the generation and outcome of the call.
+//
+// A prepare whose context is already canceled is reported with
+// StmtStatusCanceled and never populates the cache.
+func (sc *StmtCache) PrepareContextState(ctx context.Context, query string) (*sql.Stmt, StmtState, error) {
 	ctxPrep, ok := sc.prep.(PreparerContext)
 	if !ok {
-		return nil, NoContextSupport
+		state := StmtState{
+			Query:      query,
+			Status:     StmtStatusFailed,
+			Generation: sc.Generation(),
+			Err:        NoContextSupport,
+		}
+		sc.mu.Lock()
+		sc.states[query] = state
+		sc.mu.Unlock()
+		return nil, state, NoContextSupport
 	}
-	sc.mu.Lock()
-	defer sc.mu.Unlock()
-	stmt, ok := sc.cache[query]
-	if ok {
-		return stmt, nil
-	}
-	stmt, err := ctxPrep.PrepareContext(ctx, query)
-	if err == nil {
-		sc.cache[query] = stmt
-	}
-	return stmt, err
+	return sc.prepare(query, func() (*sql.Stmt, error) {
+		return ctxPrep.PrepareContext(ctx, query)
+	}, func(err error) bool {
+		return ctx.Err() == context.Canceled || ctx.Err() == context.DeadlineExceeded
+	})
 }
 
 // ExecContext delegates down to the underlying PreparerContext using a prepared statement
