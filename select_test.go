@@ -188,6 +188,58 @@ func TestSelectBuilderNestedSelectJoin(t *testing.T) {
 	assert.Equal(t, args, expectedArgs)
 }
 
+func TestSelectBuilderTwoTableJoinWithAliases(t *testing.T) {
+
+	expectedSql := "SELECT o.id, c.name FROM orders o JOIN customers c ON o.customer_id = c.id AND c.status = ? WHERE o.id = ?"
+	expectedArgs := []interface{}{"active", 7}
+
+	b := Select("o.id", "c.name").From("orders o").
+		Join("customers c ON o.customer_id = c.id AND c.status = ?", "active").
+		Where("o.id = ?", 7)
+
+	sql, args, err := b.ToSql()
+	assert.NoError(t, err)
+
+	assert.Equal(t, expectedSql, sql)
+	assert.Equal(t, args, expectedArgs)
+}
+
+func TestSelectBuilderJoinRejectsPlaceholderInAlias(t *testing.T) {
+
+	// A hostile alias smuggling a placeholder would shift every later arg
+	// onto the wrong condition; the join must fail closed instead.
+	b := Select("*").From("orders o").
+		Join("customers ? ON o.customer_id = customers.id AND customers.status = ?", "x", "active")
+
+	_, _, err := b.ToSql()
+	if assert.Error(t, err) {
+		assert.Contains(t, err.Error(), "placeholder in table/alias portion")
+	}
+}
+
+func TestSelectBuilderJoinRejectsPlaceholderArgMismatch(t *testing.T) {
+
+	// Two placeholders in the ON condition but only one arg: binding would
+	// silently attach the arg to the wrong condition.
+	b := Select("*").From("orders o").
+		Join("customers c ON o.customer_id = c.id AND c.status = ? AND c.region = ?", "active")
+
+	_, _, err := b.ToSql()
+	if assert.Error(t, err) {
+		assert.Contains(t, err.Error(), "2 placeholder(s) but 1 arg(s)")
+	}
+}
+
+func TestSelectBuilderJoinRejectsArgsWithoutOn(t *testing.T) {
+
+	b := Select("*").From("orders o").Join("customers c", "active")
+
+	_, _, err := b.ToSql()
+	if assert.Error(t, err) {
+		assert.Contains(t, err.Error(), "no ON condition")
+	}
+}
+
 func TestSelectWithOptions(t *testing.T) {
 	sql, _, err := Select("*").From("foo").Distinct().Options("SQL_NO_CACHE").ToSql()
 

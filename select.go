@@ -291,7 +291,7 @@ func (b SelectBuilder) FromSelect(from SelectBuilder, alias string) SelectBuilde
 
 // JoinClause adds a join clause to the query.
 func (b SelectBuilder) JoinClause(pred interface{}, args ...interface{}) SelectBuilder {
-	return builder.Append(b, "Joins", newPart(pred, args...)).(SelectBuilder)
+	return builder.Append(b, "Joins", newJoinClausePart(pred, args...)).(SelectBuilder)
 }
 
 // Join adds a JOIN clause to the query.
