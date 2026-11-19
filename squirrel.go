@@ -148,7 +148,19 @@ func DebugSqlizer(s Sqlizer) string {
 	buf := &bytes.Buffer{}
 	i := 0
 	for {
-		p := strings.Index(sql, placeholder)
+		var p int
+		if placeholder == "?" {
+			// Use the same placeholder boundaries as ReplacePlaceholders so
+			// the debug view cannot disagree with the executed statement
+			// about which question marks bind args.
+			var perr error
+			p, perr = findPlaceholder(sql)
+			if perr != nil {
+				return fmt.Sprintf("[DebugSqlizer error: %s]", perr)
+			}
+		} else {
+			p = strings.Index(sql, placeholder)
+		}
 		if p == -1 {
 			break
 		}

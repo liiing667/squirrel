@@ -186,7 +186,7 @@ func TestDebugSqlizerSelectQuestion(t *testing.T) {
 
 func TestDebugSqlizer(t *testing.T) {
 	sqlizer := Expr("x = ? AND y = ? AND z = '??'", 1, "text")
-	expectedDebug := "x = '1' AND y = 'text' AND z = '?'"
+	expectedDebug := "x = '1' AND y = 'text' AND z = '??'"
 	assert.Equal(t, expectedDebug, DebugSqlizer(sqlizer))
 }
 

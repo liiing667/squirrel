@@ -26,6 +26,23 @@ func TestConcatExprBadType(t *testing.T) {
 	assert.Contains(t, err.Error(), "123 is not")
 }
 
+func TestExprNestedSqlizerSkipsLiteralsAndComments(t *testing.T) {
+	inner := Expr("IN (?)", 1)
+	b := Expr("SELECT '?' /* ? */ WHERE id ? -- ?\n", inner)
+	sql, args, err := b.ToSql()
+	assert.NoError(t, err)
+	assert.Equal(t, "SELECT '?' /* ? */ WHERE id IN (?) -- ?\n", sql)
+	assert.Equal(t, []interface{}{1}, args)
+}
+
+func TestExprNestedSqlizerUnterminatedLiteral(t *testing.T) {
+	b := Expr("SELECT 'oops WHERE id = ?", Expr("?", 1))
+	_, _, err := b.ToSql()
+	if assert.Error(t, err) {
+		assert.Contains(t, err.Error(), "unterminated")
+	}
+}
+
 func TestEqToSql(t *testing.T) {
 	b := Eq{"id": 1}
 	sql, args, err := b.ToSql()
