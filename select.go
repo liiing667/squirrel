@@ -291,7 +291,32 @@ func (b SelectBuilder) FromSelect(from SelectBuilder, alias string) SelectBuilde
 
 // JoinClause adds a join clause to the query.
 func (b SelectBuilder) JoinClause(pred interface{}, args ...interface{}) SelectBuilder {
-	return builder.Append(b, "Joins", newPart(pred, args...)).(SelectBuilder)
+	return builder.Append(b, "Joins", newJoinPart(pred, args...)).(SelectBuilder)
+}
+
+// JoinOn adds a structured JOIN clause to the query. The table may be
+// schema-qualified ("public.orders") and the alias, when non-empty, must be a
+// bare identifier; both are validated at ToSql time so an untrusted alias
+// cannot inject SQL or placeholders into the clause. The on expression owns
+// its own args, keeping placeholder order consistent with the rest of the
+// statement. Validation failures make ToSql return an error.
+func (b SelectBuilder) JoinOn(table, alias string, on Sqlizer) SelectBuilder {
+	return b.JoinClause(newJoinClause("JOIN", table, alias, on))
+}
+
+// LeftJoinOn adds a structured LEFT JOIN clause. See JoinOn.
+func (b SelectBuilder) LeftJoinOn(table, alias string, on Sqlizer) SelectBuilder {
+	return b.JoinClause(newJoinClause("LEFT JOIN", table, alias, on))
+}
+
+// RightJoinOn adds a structured RIGHT JOIN clause. See JoinOn.
+func (b SelectBuilder) RightJoinOn(table, alias string, on Sqlizer) SelectBuilder {
+	return b.JoinClause(newJoinClause("RIGHT JOIN", table, alias, on))
+}
+
+// InnerJoinOn adds a structured INNER JOIN clause. See JoinOn.
+func (b SelectBuilder) InnerJoinOn(table, alias string, on Sqlizer) SelectBuilder {
+	return b.JoinClause(newJoinClause("INNER JOIN", table, alias, on))
 }
 
 // Join adds a JOIN clause to the query.
