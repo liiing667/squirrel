@@ -105,3 +105,22 @@ func TestUpdateBuilderFromSelect(t *testing.T) {
 			"WHERE employees.account_id = subquery.id"
 	assert.Equal(t, expectedSql, sql)
 }
+
+func TestUpdateBuilderNestedExprPlaceholders(t *testing.T) {
+	// Column identity and value are bound pairwise by Set; nested
+	// expressions keep their args in column order across dialects.
+	b := Update("test").
+		Set("a", Expr("? + 1", 1)).
+		Set("b", 2).
+		Where("c = ?", 3)
+
+	sql, args, err := b.PlaceholderFormat(Question).ToSql()
+	assert.NoError(t, err)
+	assert.Equal(t, "UPDATE test SET a = ? + 1, b = ? WHERE c = ?", sql)
+	assert.Equal(t, []interface{}{1, 2, 3}, args)
+
+	sql, args, err = b.PlaceholderFormat(Dollar).ToSql()
+	assert.NoError(t, err)
+	assert.Equal(t, "UPDATE test SET a = $1 + 1, b = $2 WHERE c = $3", sql)
+	assert.Equal(t, []interface{}{1, 2, 3}, args)
+}

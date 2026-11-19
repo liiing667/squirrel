@@ -119,6 +119,10 @@ func (d *insertData) appendValuesToSQL(w io.Writer, args []interface{}) ([]inter
 		return args, errors.New("values for insert statements are not set")
 	}
 
+	if err := d.validateValues(); err != nil {
+		return args, err
+	}
+
 	io.WriteString(w, "VALUES ")
 
 	valuesStrings := make([]string, len(d.Values))
@@ -143,6 +147,25 @@ func (d *insertData) appendValuesToSQL(w io.Writer, args []interface{}) ([]inter
 	io.WriteString(w, strings.Join(valuesStrings, ","))
 
 	return args, nil
+}
+
+// validateValues ensures every row of values matches the declared columns (or,
+// when no columns are declared, the first row) so generated placeholders can
+// never drift away from the columns they bind to. Each value counts as one
+// column, including nested Sqlizer expressions.
+func (d *insertData) validateValues() error {
+	expected := len(d.Columns)
+	if expected == 0 {
+		expected = len(d.Values[0])
+	}
+	for r, row := range d.Values {
+		if len(row) != expected {
+			return fmt.Errorf(
+				"insert statements must have the same number of values and columns: row %d has %d values, expected %d",
+				r+1, len(row), expected)
+		}
+	}
+	return nil
 }
 
 func (d *insertData) appendSelectToSQL(w io.Writer, args []interface{}) ([]interface{}, error) {
