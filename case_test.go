@@ -140,6 +140,64 @@ func TestCaseWithNoWhenClause(t *testing.T) {
 	assert.Equal(t, "case expression must contain at lease one WHEN clause", err.Error())
 }
 
+func TestCaseWithEmptyWhen(t *testing.T) {
+	caseStmt := Case().When("", "x")
+
+	qb := Select().Column(caseStmt).From("table")
+	sql, args, err := qb.ToSql()
+
+	assert.Error(t, err)
+	assert.Equal(t, "case expression must contain a WHEN expression", err.Error())
+	assert.Empty(t, sql)
+	assert.Empty(t, args)
+}
+
+func TestCaseWithEmptyThen(t *testing.T) {
+	caseStmt := Case().When("x", nil)
+
+	qb := Select().Column(caseStmt).From("table")
+	sql, args, err := qb.ToSql()
+
+	assert.Error(t, err)
+	assert.Equal(t, "case expression must contain a THEN expression", err.Error())
+	assert.Empty(t, sql)
+	assert.Empty(t, args)
+}
+
+func TestCaseWithInvalidBranchArg(t *testing.T) {
+	caseStmt := Case().
+		When("x", "ok").
+		When(123, "bad")
+
+	sql, args, err := caseStmt.ToSql()
+
+	assert.Error(t, err)
+	assert.Equal(t, "expected string or Sqlizer, not int", err.Error())
+	assert.Empty(t, sql)
+	assert.Empty(t, args)
+}
+
+func TestCaseWithNestedExprBranches(t *testing.T) {
+	caseStmt := Case().
+		When(Expr("x = ?", 1), Expr("?", "one")).
+		When(Expr("x = ?", 2), Expr("?", "two"))
+
+	qb := Select().Column(caseStmt).From("table")
+	sql, args, err := qb.ToSql()
+
+	assert.NoError(t, err)
+
+	expectedSql := "SELECT CASE " +
+		"WHEN x = ? THEN ? " +
+		"WHEN x = ? THEN ? " +
+		"END " +
+		"FROM table"
+	assert.Equal(t, expectedSql, sql)
+
+	expectedArgs := []interface{}{1, "one", 2, "two"}
+	assert.Equal(t, expectedArgs, args)
+}
+
 func TestCaseBuilderMustSql(t *testing.T) {
 	defer func() {
 		if r := recover(); r == nil {

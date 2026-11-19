@@ -52,6 +52,31 @@ func newWhenPart(when interface{}, then interface{}) whenPart {
 	return whenPart{newPart(when), newPart(then)}
 }
 
+// ToSql serializes a whole "WHEN ... THEN ..." branch so that the branch
+// identity, its arguments and any failure are produced together.
+func (p whenPart) ToSql() (sqlStr string, args []interface{}, err error) {
+	whenSql, whenArgs, err := nestedToSql(p.when)
+	if err != nil {
+		return "", nil, err
+	}
+	if len(whenSql) == 0 {
+		return "", nil, errors.New("case expression must contain a WHEN expression")
+	}
+
+	thenSql, thenArgs, err := nestedToSql(p.then)
+	if err != nil {
+		return "", nil, err
+	}
+	if len(thenSql) == 0 {
+		return "", nil, errors.New("case expression must contain a THEN expression")
+	}
+
+	sqlStr = "WHEN " + whenSql + " THEN " + thenSql
+	args = append(whenArgs, thenArgs...)
+
+	return
+}
+
 // caseData holds all the data required to build a CASE SQL construct
 type caseData struct {
 	What      Sqlizer
@@ -75,10 +100,7 @@ func (d *caseData) ToSql() (sqlStr string, args []interface{}, err error) {
 	}
 
 	for _, p := range d.WhenParts {
-		sql.WriteString("WHEN ")
-		sql.WriteSql(p.when)
-		sql.WriteString("THEN ")
-		sql.WriteSql(p.then)
+		sql.WriteSql(p)
 	}
 
 	if d.Else != nil {
@@ -88,7 +110,12 @@ func (d *caseData) ToSql() (sqlStr string, args []interface{}, err error) {
 
 	sql.WriteString("END")
 
-	return sql.ToSql()
+	sqlStr, args, err = sql.ToSql()
+	if err != nil {
+		return "", nil, err
+	}
+
+	return
 }
 
 // CaseBuilder builds SQL CASE construct which could be used as parts of queries.
