@@ -1,3 +1,4 @@
+//go:build go1.8
 // +build go1.8
 
 package squirrel
@@ -28,7 +29,7 @@ type DBProxyContext interface {
 //
 // Stmts are cached based on the string value of their queries.
 func NewStmtCache(prep PreparerContext) *StmtCache {
-	return &StmtCache{prep: prep, cache: make(map[string]*sql.Stmt)}
+	return NewStmtCacheWithOptions(prep)
 }
 
 // NewStmtCacher is deprecated
@@ -36,6 +37,40 @@ func NewStmtCache(prep PreparerContext) *StmtCache {
 // Use NewStmtCache instead
 func NewStmtCacher(prep PreparerContext) DBProxyContext {
 	return NewStmtCache(prep)
+}
+
+// StmtCacheOption configures a StmtCache created by NewStmtCacheWithOptions.
+type StmtCacheOption func(*StmtCache)
+
+// WithMaxEntries limits the number of prepared statements held by the cache.
+// A non-positive value means the number of entries is not limited.
+func WithMaxEntries(maxEntries int) StmtCacheOption {
+	return func(sc *StmtCache) {
+		sc.maxEntries = maxEntries
+	}
+}
+
+// WithMaxSQLBytes limits the combined size, in bytes, of the SQL strings held
+// by the cache. A non-positive value means the SQL byte usage is not limited.
+func WithMaxSQLBytes(maxSQLBytes int) StmtCacheOption {
+	return func(sc *StmtCache) {
+		sc.maxSQLBytes = maxSQLBytes
+	}
+}
+
+// NewStmtCacheWithOptions returns a *StmtCache wrapping prep that caches
+// Prepared Stmts and enforces the limits supplied via StmtCacheOptions.
+//
+// When the entry count or SQL byte budget is exhausted, Prepare and
+// PrepareContext return an error wrapping ErrCacheLimit before the underlying
+// Preparer is touched; already cached queries keep working as cache hits.
+// Clear empties the cache and restores the full budgets.
+func NewStmtCacheWithOptions(prep PreparerContext, opts ...StmtCacheOption) *StmtCache {
+	sc := &StmtCache{prep: prep, cache: make(map[string]*sql.Stmt)}
+	for _, opt := range opts {
+		opt(sc)
+	}
+	return sc
 }
 
 // PrepareContext delegates down to the underlying PreparerContext and caches the result
@@ -47,15 +82,9 @@ func (sc *StmtCache) PrepareContext(ctx context.Context, query string) (*sql.Stm
 	}
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
-	stmt, ok := sc.cache[query]
-	if ok {
-		return stmt, nil
-	}
-	stmt, err := ctxPrep.PrepareContext(ctx, query)
-	if err == nil {
-		sc.cache[query] = stmt
-	}
-	return stmt, err
+	return sc.prepareLocked(query, func() (*sql.Stmt, error) {
+		return ctxPrep.PrepareContext(ctx, query)
+	})
 }
 
 // ExecContext delegates down to the underlying PreparerContext using a prepared statement

@@ -2,9 +2,15 @@ package squirrel
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"sync"
 )
+
+// ErrCacheLimit is returned when a StmtCache is full, i.e. adding another
+// prepared statement would exceed its configured entry count or SQL byte
+// budget. The underlying Preparer is never called when this error is returned.
+var ErrCacheLimit = errors.New("statement cache limit reached")
 
 // Prepareer is the interface that wraps the Prepare method.
 //
@@ -29,9 +35,50 @@ type DBProxy interface {
 // for Exec, Query and QueryRow and caches the returns *sql.Stmt using the provided
 // query as the key. So that it can be automatically re-used.
 type StmtCache struct {
-	prep  Preparer
+	prep Preparer
+
 	cache map[string]*sql.Stmt
-	mu    sync.Mutex
+
+	// maxEntries and maxSQLBytes bound the cache. A non-positive value means
+	// no limit of that kind is enforced.
+	maxEntries  int
+	maxSQLBytes int
+	// sqlBytes tracks len(query) summed over all cached entries.
+	sqlBytes int
+
+	mu sync.Mutex
+}
+
+// prepareLocked looks up query in the cache and, on a miss, enforces the
+// configured limits before delegating to doPrepare. The caller must hold sc.mu.
+func (sc *StmtCache) prepareLocked(query string, doPrepare func() (*sql.Stmt, error)) (*sql.Stmt, error) {
+	if stmt, ok := sc.cache[query]; ok {
+		return stmt, nil
+	}
+
+	if err := sc.checkLimitLocked(query); err != nil {
+		return nil, err
+	}
+
+	stmt, err := doPrepare()
+	if err == nil {
+		sc.cache[query] = stmt
+		sc.sqlBytes += len(query)
+	}
+	return stmt, err
+}
+
+// checkLimitLocked returns ErrCacheLimit when caching query would exceed the
+// configured entry count or SQL byte budget. The caller must hold sc.mu.
+func (sc *StmtCache) checkLimitLocked(query string) error {
+	if sc.maxEntries > 0 && len(sc.cache) >= sc.maxEntries {
+		return fmt.Errorf("%w: max entries %d reached", ErrCacheLimit, sc.maxEntries)
+	}
+	if sc.maxSQLBytes > 0 && sc.sqlBytes+len(query) > sc.maxSQLBytes {
+		return fmt.Errorf("%w: SQL byte budget %d exceeded by query of %d bytes",
+			ErrCacheLimit, sc.maxSQLBytes, len(query))
+	}
+	return nil
 }
 
 // Prepare delegates down to the underlying Preparer and caches the result
@@ -40,15 +87,24 @@ func (sc *StmtCache) Prepare(query string) (*sql.Stmt, error) {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 
-	stmt, ok := sc.cache[query]
-	if ok {
-		return stmt, nil
-	}
-	stmt, err := sc.prep.Prepare(query)
-	if err == nil {
-		sc.cache[query] = stmt
-	}
-	return stmt, err
+	return sc.prepareLocked(query, func() (*sql.Stmt, error) {
+		return sc.prep.Prepare(query)
+	})
+}
+
+// Len returns the number of statements currently held by the cache.
+func (sc *StmtCache) Len() int {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	return len(sc.cache)
+}
+
+// SQLBytes returns the total size in bytes of the SQL strings currently held
+// by the cache.
+func (sc *StmtCache) SQLBytes() int {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	return sc.sqlBytes
 }
 
 // Exec delegates down to the underlying Preparer using a prepared statement
@@ -94,6 +150,7 @@ func (sc *StmtCache) Clear() (err error) {
 			err = cerr
 		}
 	}
+	sc.sqlBytes = 0
 
 	if err != nil {
 		return fmt.Errorf("one or more Stmt.Close failed; last error: %v", err)

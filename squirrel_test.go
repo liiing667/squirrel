@@ -30,7 +30,7 @@ var StubError = fmt.Errorf("this is a stub; this is only a stub")
 func (s *DBStub) Prepare(query string) (*sql.Stmt, error) {
 	s.LastPrepareSql = query
 	s.PrepareCount++
-	return nil, nil
+	return nil, s.err
 }
 
 func (s *DBStub) Exec(query string, args ...interface{}) (sql.Result, error) {

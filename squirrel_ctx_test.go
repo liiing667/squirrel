@@ -1,3 +1,4 @@
+//go:build go1.8
 // +build go1.8
 
 package squirrel
@@ -13,7 +14,7 @@ import (
 func (s *DBStub) PrepareContext(ctx context.Context, query string) (*sql.Stmt, error) {
 	s.LastPrepareSql = query
 	s.PrepareCount++
-	return nil, nil
+	return nil, s.err
 }
 
 func (s *DBStub) ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {

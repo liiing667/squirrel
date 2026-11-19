@@ -71,6 +71,32 @@ mydb := sq.StatementBuilder.RunWith(dbCache)
 select_users := mydb.Select("*").From("users")
 ```
 
+By default the cache grows without bounds. In long-running processes with
+highly variable queries you can cap both the number of cached statements and
+the combined size of their SQL strings. Once a limit is reached, preparing a
+new query fails with an error wrapping `sq.ErrCacheLimit` *before* the
+database is touched, while queries already in the cache keep working as
+normal cache hits. `Clear` closes the cached statements and restores the full
+budgets:
+
+```go
+dbCache := sq.NewStmtCacheWithOptions(
+    db,
+    sq.WithMaxEntries(1000),    // at most 1000 prepared statements
+    sq.WithMaxSQLBytes(512*1024), // at most 512 KiB of cached SQL text
+)
+
+if _, err := dbCache.Prepare(variableQuery); errors.Is(err, sq.ErrCacheLimit) {
+    // cache is full; close cached statements to reclaim the budgets
+    if err := dbCache.Clear(); err != nil {
+        // one or more statements failed to close
+    }
+}
+```
+
+A non-positive limit (the default) disables that bound. `Len` and `SQLBytes`
+report the current cache usage.
+
 Squirrel loves PostgreSQL:
 
 ```go
