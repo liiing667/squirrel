@@ -88,7 +88,18 @@ func (d *caseData) ToSql() (sqlStr string, args []interface{}, err error) {
 
 	sql.WriteString("END")
 
-	return sql.ToSql()
+	sqlStr, args, err = sql.ToSql()
+	if err != nil {
+		return "", nil, err
+	}
+
+	// Fail closed if the assembled CASE expression does not have exactly
+	// one placeholder per arg.
+	if err = validateSqlArgs(sqlStr, args); err != nil {
+		return "", nil, err
+	}
+
+	return sqlStr, args, nil
 }
 
 // CaseBuilder builds SQL CASE construct which could be used as parts of queries.

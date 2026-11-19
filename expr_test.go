@@ -421,6 +421,68 @@ func TestExprEscaped(t *testing.T) {
 	assert.Equal(t, expectedArgs, args)
 }
 
+func TestExprNestedPlaceholderArgMismatch(t *testing.T) {
+	// one arg fewer than placeholders
+	b := Expr("x = ? AND y = ?", Expr("z = ?", 1))
+	_, _, err := b.ToSql()
+	assert.Error(t, err)
+
+	// one arg more than placeholders
+	b = Expr("x = ?", Expr("y = ?", 1), 2)
+	_, _, err = b.ToSql()
+	assert.Error(t, err)
+}
+
+func TestExprNestedPlaceholderArgMatch(t *testing.T) {
+	// multiple args bound across a nested Sqlizer
+	b := Expr("x = ? AND y = ?", Expr("z = ?", 1), 2)
+	sql, args, err := b.ToSql()
+	assert.NoError(t, err)
+
+	expectedSql := "x = z = ? AND y = ?"
+	assert.Equal(t, expectedSql, sql)
+
+	expectedArgs := []interface{}{1, 2}
+	assert.Equal(t, expectedArgs, args)
+}
+
+func TestExprNestedEscapedPlaceholder(t *testing.T) {
+	// escaped "??" does not consume an arg and is not validated as one
+	b := Expr("count(??, ?)", Expr("x = ?", 1))
+	sql, args, err := b.ToSql()
+	assert.NoError(t, err)
+
+	expectedSql := "count(??, x = ?)"
+	assert.Equal(t, expectedSql, sql)
+
+	expectedArgs := []interface{}{1}
+	assert.Equal(t, expectedArgs, args)
+}
+
+func TestConcatExprPlaceholderArgMismatch(t *testing.T) {
+	// one arg fewer than placeholders
+	b := ConcatExpr("x = ? AND ", Expr("y = ?", 1))
+	_, _, err := b.ToSql()
+	assert.Error(t, err)
+
+	// one arg more than placeholders
+	b = ConcatExpr("x = ", Expr("y = ?", 1, 2))
+	_, _, err = b.ToSql()
+	assert.Error(t, err)
+}
+
+func TestConcatExprEscapedPlaceholder(t *testing.T) {
+	b := ConcatExpr("count(??) = ", Expr("?", 1))
+	sql, args, err := b.ToSql()
+	assert.NoError(t, err)
+
+	expectedSql := "count(??) = ?"
+	assert.Equal(t, expectedSql, sql)
+
+	expectedArgs := []interface{}{1}
+	assert.Equal(t, expectedArgs, args)
+}
+
 func TestExprRecursion(t *testing.T) {
 	{
 		b := Expr("count(?)", Expr("nullif(a,?)", "b"))

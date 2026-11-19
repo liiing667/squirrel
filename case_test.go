@@ -148,3 +148,21 @@ func TestCaseBuilderMustSql(t *testing.T) {
 	}()
 	Case("").MustSql()
 }
+
+func TestCasePlaceholderArgMismatch(t *testing.T) {
+	// one arg fewer than placeholders
+	caseStmt := Case().
+		When(Expr("x = ? AND y = ?", 1), "one")
+
+	qb := Select().Column(caseStmt).From("table")
+	_, _, err := qb.ToSql()
+	assert.Error(t, err)
+
+	// one arg more than placeholders
+	caseStmt = Case("x = ?", 1).
+		When("true", Expr("?", "y", "extra"))
+
+	qb = Select().Column(caseStmt).From("table")
+	_, _, err = qb.ToSql()
+	assert.Error(t, err)
+}

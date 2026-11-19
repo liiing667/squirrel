@@ -46,6 +46,10 @@ func (e expr) ToSql() (sql string, args []interface{}, err error) {
 	var isql string
 	var iargs []interface{}
 
+	// expanded tracks whether any nested Sqlizer was expanded into the
+	// output; if so, placeholders and args must correspond one-to-one.
+	expanded := false
+
 	for err == nil && len(ap) > 0 && len(sp) > 0 {
 		i := strings.Index(sp, "?")
 		if i < 0 {
@@ -62,6 +66,7 @@ func (e expr) ToSql() (sql string, args []interface{}, err error) {
 		if as, ok := ap[0].(Sqlizer); ok {
 			// sqlizer argument; expand it and append the result
 			isql, iargs, err = as.ToSql()
+			expanded = true
 			buf.WriteString(sp[:i])
 			buf.WriteString(isql)
 			args = append(args, iargs...)
@@ -78,7 +83,21 @@ func (e expr) ToSql() (sql string, args []interface{}, err error) {
 
 	// append the remaining sql and arguments
 	buf.WriteString(sp)
-	return buf.String(), append(args, ap...), err
+	args = append(args, ap...)
+	if err != nil {
+		return "", nil, err
+	}
+	sql = buf.String()
+	if expanded {
+		// A nested Sqlizer was expanded inline; the resulting statement is
+		// only safe to execute if every placeholder binds to exactly one
+		// arg. Fail closed otherwise, so a miscounted expression cannot
+		// silently shift args onto the wrong filters.
+		if err = validateSqlArgs(sql, args); err != nil {
+			return "", nil, err
+		}
+	}
+	return sql, args, nil
 }
 
 type concatExpr []interface{}
@@ -99,7 +118,38 @@ func (ce concatExpr) ToSql() (sql string, args []interface{}, err error) {
 			return "", nil, fmt.Errorf("%#v is not a string or Sqlizer", part)
 		}
 	}
+	if err = validateSqlArgs(sql, args); err != nil {
+		return "", nil, err
+	}
 	return
+}
+
+// countPlaceholders returns the number of unescaped "?" placeholders in sql.
+// A "??" sequence is an escaped literal question mark and is not counted.
+func countPlaceholders(sql string) (count int) {
+	for i := 0; i < len(sql); i++ {
+		if sql[i] != '?' {
+			continue
+		}
+		if i+1 < len(sql) && sql[i+1] == '?' {
+			// escaped "??"; step past it
+			i++
+			continue
+		}
+		count++
+	}
+	return
+}
+
+// validateSqlArgs checks that sql contains exactly one unescaped placeholder
+// per arg, so positional binding cannot associate an arg with the wrong
+// placeholder.
+func validateSqlArgs(sql string, args []interface{}) error {
+	if placeholders := countPlaceholders(sql); placeholders != len(args) {
+		return fmt.Errorf("number of placeholders (%d) does not match number of args (%d)",
+			placeholders, len(args))
+	}
+	return nil
 }
 
 // ConcatExpr builds an expression by concatenating strings and other expressions.
