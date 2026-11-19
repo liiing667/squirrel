@@ -39,7 +39,9 @@ var (
 type questionFormat struct{}
 
 func (questionFormat) ReplacePlaceholders(sql string) (string, error) {
-	return sql, nil
+	// unescape "??" => "?" so escaped literals render consistently with
+	// the positional placeholder formats
+	return strings.ReplaceAll(sql, "??", "?"), nil
 }
 
 func (questionFormat) debugPlaceholder() string {

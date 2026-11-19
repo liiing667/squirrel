@@ -13,6 +13,12 @@ func TestQuestion(t *testing.T) {
 	assert.Equal(t, sql, s)
 }
 
+func TestQuestionEscape(t *testing.T) {
+	sql := "SELECT \"data\" -> 'tags' ??| array['?'] AND enabled = ?"
+	s, _ := Question.ReplacePlaceholders(sql)
+	assert.Equal(t, "SELECT \"data\" -> 'tags' ?| array['?'] AND enabled = ?", s)
+}
+
 func TestDollar(t *testing.T) {
 	sql := "x = ? AND y = ?"
 	s, _ := Dollar.ReplacePlaceholders(sql)

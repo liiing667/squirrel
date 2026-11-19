@@ -87,7 +87,7 @@ func (ce concatExpr) ToSql() (sql string, args []interface{}, err error) {
 	for _, part := range ce {
 		switch p := part.(type) {
 		case string:
-			sql += p
+			sql += escapeUnboundPlaceholders(p)
 		case Sqlizer:
 			pSql, pArgs, err := p.ToSql()
 			if err != nil {
@@ -100,6 +100,34 @@ func (ce concatExpr) ToSql() (sql string, args []interface{}, err error) {
 		}
 	}
 	return
+}
+
+// escapeUnboundPlaceholders doubles every unescaped "?" in a raw string part
+// of a concatExpr. Raw string parts carry no args, so any "?" in them can
+// never be bound; left as-is it would be counted as a bind placeholder by
+// PlaceholderFormat.ReplacePlaceholders and shift the positions of the real
+// args. Doubling marks it as an escaped literal ("??" => "?" on replacement),
+// keeping the placeholder count strictly aligned with args. Already escaped
+// "??" sequences are left untouched.
+func escapeUnboundPlaceholders(sql string) string {
+	if strings.Index(sql, "?") < 0 {
+		return sql
+	}
+	buf := &bytes.Buffer{}
+	for i := 0; i < len(sql); i++ {
+		buf.WriteByte(sql[i])
+		if sql[i] == '?' {
+			if i+1 < len(sql) && sql[i+1] == '?' {
+				// already escaped "??"; copy and step past
+				buf.WriteByte(sql[i+1])
+				i++
+			} else {
+				// unbound placeholder; escape it
+				buf.WriteByte('?')
+			}
+		}
+	}
+	return buf.String()
 }
 
 // ConcatExpr builds an expression by concatenating strings and other expressions.

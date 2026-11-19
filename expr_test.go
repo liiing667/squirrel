@@ -26,6 +26,54 @@ func TestConcatExprBadType(t *testing.T) {
 	assert.Contains(t, err.Error(), "123 is not")
 }
 
+func TestConcatExprUnboundPlaceholders(t *testing.T) {
+	// unbound "?" in raw string parts must not be counted as bind
+	// placeholders; only the nested Sqlizer contributes args
+	b := ConcatExpr("a = ", Expr("?", 1), " OR b = ? OR c = ?")
+	sql, args, err := b.ToSql()
+	assert.NoError(t, err)
+
+	expectedSql := "a = ? OR b = ?? OR c = ??"
+	assert.Equal(t, expectedSql, sql)
+
+	expectedArgs := []interface{}{1}
+	assert.Equal(t, expectedArgs, args)
+
+	// after positional replacement the unbound "?" stay literal and the
+	// bound placeholder keeps position 1
+	s, err := Dollar.ReplacePlaceholders(sql)
+	assert.NoError(t, err)
+	assert.Equal(t, "a = $1 OR b = ? OR c = ?", s)
+
+	s, err = Question.ReplacePlaceholders(sql)
+	assert.NoError(t, err)
+	assert.Equal(t, "a = ? OR b = ? OR c = ?", s)
+}
+
+func TestConcatExprEscapedAndNested(t *testing.T) {
+	// already escaped "??" and plain text pass through untouched, nested
+	// Sqlizers still expand with their args in order
+	b := ConcatExpr(
+		"d ??| ",
+		Expr("array[?]", "x"),
+		" AND e = ",
+		Expr("COALESCE(?, ?)", 1, 2),
+		" AND f ? ",
+	)
+	sql, args, err := b.ToSql()
+	assert.NoError(t, err)
+
+	expectedSql := "d ??| array[?] AND e = COALESCE(?, ?) AND f ?? "
+	assert.Equal(t, expectedSql, sql)
+
+	expectedArgs := []interface{}{"x", 1, 2}
+	assert.Equal(t, expectedArgs, args)
+
+	s, err := Dollar.ReplacePlaceholders(sql)
+	assert.NoError(t, err)
+	assert.Equal(t, "d ?| array[$1] AND e = COALESCE($2, $3) AND f ? ", s)
+}
+
 func TestEqToSql(t *testing.T) {
 	b := Eq{"id": 1}
 	sql, args, err := b.ToSql()
