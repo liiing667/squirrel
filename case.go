@@ -3,43 +3,13 @@ package squirrel
 import (
 	"bytes"
 	"errors"
+	"fmt"
 
 	"github.com/lann/builder"
 )
 
 func init() {
 	builder.Register(CaseBuilder{}, caseData{})
-}
-
-// sqlizerBuffer is a helper that allows to write many Sqlizers one by one
-// without constant checks for errors that may come from Sqlizer
-type sqlizerBuffer struct {
-	bytes.Buffer
-	args []interface{}
-	err  error
-}
-
-// WriteSql converts Sqlizer to SQL strings and writes it to buffer
-func (b *sqlizerBuffer) WriteSql(item Sqlizer) {
-	if b.err != nil {
-		return
-	}
-
-	var str string
-	var args []interface{}
-	str, args, b.err = nestedToSql(item)
-
-	if b.err != nil {
-		return
-	}
-
-	b.WriteString(str)
-	b.WriteByte(' ')
-	b.args = append(b.args, args...)
-}
-
-func (b *sqlizerBuffer) ToSql() (string, []interface{}, error) {
-	return b.String(), b.args, b.err
 }
 
 // whenPart is a helper structure to describe SQLs "WHEN ... THEN ..." expression
@@ -60,35 +30,67 @@ type caseData struct {
 }
 
 // ToSql implements Sqlizer
-func (d *caseData) ToSql() (sqlStr string, args []interface{}, err error) {
+func (d *caseData) ToSql() (string, []interface{}, error) {
 	if len(d.WhenParts) == 0 {
-		err = errors.New("case expression must contain at lease one WHEN clause")
-
-		return
+		return "", nil, errors.New("case expression must contain at lease one WHEN clause")
 	}
 
-	sql := sqlizerBuffer{}
+	sql := &bytes.Buffer{}
+	var args []interface{}
 
 	sql.WriteString("CASE ")
 	if d.What != nil {
-		sql.WriteSql(d.What)
+		whatSql, whatArgs, err := nestedToSql(d.What)
+		if err != nil {
+			return "", nil, err
+		}
+		sql.WriteString(whatSql)
+		sql.WriteByte(' ')
+		args = append(args, whatArgs...)
 	}
 
-	for _, p := range d.WhenParts {
+	for i, p := range d.WhenParts {
+		whenSql, whenArgs, err := nestedToSql(p.when)
+		if err != nil {
+			return "", nil, fmt.Errorf("case WHEN #%d: %w", i+1, err)
+		}
+		if len(whenSql) == 0 {
+			return "", nil, fmt.Errorf("case WHEN #%d must not be empty", i+1)
+		}
+
+		thenSql, thenArgs, err := nestedToSql(p.then)
+		if err != nil {
+			return "", nil, fmt.Errorf("case THEN #%d: %w", i+1, err)
+		}
+		if len(thenSql) == 0 {
+			return "", nil, fmt.Errorf("case THEN #%d must not be empty", i+1)
+		}
+
 		sql.WriteString("WHEN ")
-		sql.WriteSql(p.when)
+		sql.WriteString(whenSql)
+		sql.WriteByte(' ')
 		sql.WriteString("THEN ")
-		sql.WriteSql(p.then)
+		sql.WriteString(thenSql)
+		sql.WriteByte(' ')
+
+		args = append(args, whenArgs...)
+		args = append(args, thenArgs...)
 	}
 
 	if d.Else != nil {
+		elseSql, elseArgs, err := nestedToSql(d.Else)
+		if err != nil {
+			return "", nil, err
+		}
 		sql.WriteString("ELSE ")
-		sql.WriteSql(d.Else)
+		sql.WriteString(elseSql)
+		sql.WriteByte(' ')
+		args = append(args, elseArgs...)
 	}
 
 	sql.WriteString("END")
 
-	return sql.ToSql()
+	return sql.String(), args, nil
 }
 
 // CaseBuilder builds SQL CASE construct which could be used as parts of queries.

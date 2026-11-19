@@ -148,3 +148,89 @@ func TestCaseBuilderMustSql(t *testing.T) {
 	}()
 	Case("").MustSql()
 }
+
+func TestCaseWithNestedExprs(t *testing.T) {
+	caseStmt := Case().
+		When(Expr("y = ?", 99), Expr("CONCAT('a=', ?)", 1)).
+		When(Expr("z > ?", 2), Expr("?", 3))
+
+	sql, args, err := caseStmt.ToSql()
+
+	assert.NoError(t, err)
+
+	expectedSql := "CASE " +
+		"WHEN y = ? THEN CONCAT('a=', ?) " +
+		"WHEN z > ? THEN ? " +
+		"END"
+	assert.Equal(t, expectedSql, sql)
+
+	expectedArgs := []interface{}{99, 1, 2, 3}
+	assert.Equal(t, expectedArgs, args)
+
+	expectedDollarSql := "CASE " +
+		"WHEN y = $1 THEN CONCAT('a=', $2) " +
+		"WHEN z > $3 THEN $4 " +
+		"END"
+	dollarSql, err := Dollar.ReplacePlaceholders(sql)
+	assert.NoError(t, err)
+	assert.Equal(t, expectedDollarSql, dollarSql)
+}
+
+func TestCaseWithEmptyBranch(t *testing.T) {
+	testCases := []struct {
+		name        string
+		caseStmt    CaseBuilder
+		expectedErr string
+	}{
+		{
+			name:        "nil WHEN",
+			caseStmt:    Case().When(nil, "thenVal"),
+			expectedErr: "case WHEN #1 must not be empty",
+		},
+		{
+			name:        "empty string WHEN",
+			caseStmt:    Case().When("", "thenVal"),
+			expectedErr: "case WHEN #1 must not be empty",
+		},
+		{
+			name:        "nil THEN",
+			caseStmt:    Case().When("whenVal", nil),
+			expectedErr: "case THEN #1 must not be empty",
+		},
+		{
+			name:        "empty THEN on second branch",
+			caseStmt:    Case().When("a", "one").When("b", ""),
+			expectedErr: "case THEN #2 must not be empty",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			sql, args, err := tc.caseStmt.ToSql()
+
+			assert.Error(t, err)
+			assert.Equal(t, tc.expectedErr, err.Error())
+			assert.Empty(t, sql)
+			assert.Nil(t, args)
+		})
+	}
+}
+
+func TestCaseWithInvalidBranchArg(t *testing.T) {
+	caseStmt := Case().
+		When("validWhen", "validThen").
+		When(123, 456)
+
+	sql, args, err := caseStmt.ToSql()
+
+	assert.Error(t, err)
+	assert.Equal(t, "case WHEN #2: expected string or Sqlizer, not int", err.Error())
+	assert.Empty(t, sql)
+	assert.Nil(t, args)
+
+	valid := Case().When("validWhen", "validThen")
+	validSql, validArgs, validErr := valid.ToSql()
+	assert.NoError(t, validErr)
+	assert.Equal(t, "CASE WHEN validWhen THEN validThen END", validSql)
+	assert.Nil(t, validArgs)
+}
